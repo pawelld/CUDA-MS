@@ -53,11 +53,10 @@ struct cpu_clique_data {
 #define DONE_SOLVED 1
 #define DONE_CLEANUP 2
 #define DONE_CONVERGED 3
+#define DONE_ABORTED 4
 
-//void init_cpu_clique(struct cpu_clique_data *res, char **graph, int par_n_al);
-int init_cpu_clique(struct cpu_clique_data *res, char **graph, int n);
+void init_cpu_clique(struct cpu_clique_data *res, char **graph, int n);
 void clear_cpu_clique(struct cpu_clique_data *res);
-//float iterate_cpu_clique(struct cpu_clique_data *data, float *x, int max_unsolved, float zero, int biased, float *par_unsolved);
 float iterate_cpu_clique(struct cpu_clique_data *data, float *x, int max_unsolved, float zero, float alpha, float omega, float *par_unsolved, int *abortcheck_cb(void));
 
 void apply_mask_cpu_clique(struct cpu_clique_data *res, t_bitmask mask, int e);

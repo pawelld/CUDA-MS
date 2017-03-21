@@ -33,6 +33,8 @@
 
 #include"bitops.h"
 
+extern int quiet;
+
 float graph_clique(t_bitmask *res, t_bitmask *res_upper, char **graph, int n, t_bitmask allowed, int max_unsolved, float zero, float alpha, int max_masks, int mode);
 float graph_clique_multi(t_bitmask *res, t_bitmask *res_upper, char **graph, int n, t_bitmask allowed, int max_unsolved, float zero, float alpha, int max_masks, int mode, int max_res, t_bitmask *res_all, int *n_res, int *abortcheck_cb(void));
 

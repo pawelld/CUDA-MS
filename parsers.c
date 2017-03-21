@@ -25,6 +25,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "simple_macros.h"
 #include "parsers.h"
 #include "arrays.h"
 
@@ -213,7 +214,7 @@ int read_graph_adjmat(char *file, char ***arr,  int *edges)
     int N=0;
     int done=0;
     while(!done) {
-        if(bufpos>buflen) {
+        if(bufpos>=buflen) {
             if(buflen<BUFSIZE) {
                 printf("ERROR: Corrupted file.\n");
                 exit(10);
@@ -259,5 +260,6 @@ int read_graph_adjmat(char *file, char ***arr,  int *edges)
 
     fclose(fp);
     if(edges) *edges=n_edges;
+
     return N;
 }

@@ -59,16 +59,11 @@ int cuda_device=-1;
 
 #define MAX_CUDA_DEV 8
 
-#define MAX_SIM_CUDA_RUNS 4
+#define MAX_SIM_CUDA_RUNS 16
 
-omp_lock_t dev_read_try_lock[MAX_CUDA_DEV];
 omp_lock_t dev_read_wait_lock[MAX_CUDA_DEV];
-omp_lock_t dev_resource_lock[MAX_CUDA_DEV];
 
-int dev_readacccount[MAX_CUDA_DEV];
 int dev_readcount[MAX_CUDA_DEV];
-int dev_writecount[MAX_CUDA_DEV];
-int dev_freshreset[MAX_CUDA_DEV];
 
 #pragma omp threadprivate (d_randstates, cuda_device)
 
@@ -85,153 +80,56 @@ static void lib_destructor() __attribute__((destructor));
 void lib_constructor(void)
 {
     for(int i=0; i<MAX_CUDA_DEV; i++) {
-        omp_init_lock(&dev_read_try_lock[i]);
         omp_init_lock(&dev_read_wait_lock[i]);
-        omp_init_lock(&dev_resource_lock[i]);
     }
-    memset(dev_readacccount, 0, sizeof(dev_readcount));
     memset(dev_readcount, 0, sizeof(dev_readcount));
-    memset(dev_writecount, 0, sizeof(dev_writecount));
-    memset(dev_freshreset, 0, sizeof(dev_writecount));
 }
 
 void lib_destructor(void)
 {
     for(int i=0; i<MAX_CUDA_DEV; i++) {
-        omp_destroy_lock(&dev_read_try_lock[i]);
-        omp_destroy_lock(&dev_resource_lock[i]);
+        omp_destroy_lock(&dev_read_wait_lock[i]);
     }
 }
-
-static int tryCUDAError(const char *msg, int line)
-{
-    cudaError_t err = cudaGetLastError();
-    if( cudaSuccess != err) {
-#pragma omp critical (tryCUDAError)
-        {
-            printf("Cuda error: line: %d:  %s: %s.\n", line, msg, cudaGetErrorString( err) );
-
-            P_INT(omp_get_thread_num()) P_INT(cuda_device) P_NL;
-            P_INT_ARR(threaddev, 32) P_NL;
-
-
-        }
-        return 1;
-    }
-
-    return 0;
-}
-
 
 static void checkCUDAError(const char *msg, int line)
 {
-    if(tryCUDAError(msg, line)) abort();
+    cudaError_t err = cudaGetLastError();
+    if( cudaSuccess != err) {
+#pragma omp critical (checkCUDAError)
+        {
+            printf("Cuda error: line: %d:  %s: %s.\n", line, msg, cudaGetErrorString( err) );
+            P_INT(omp_get_thread_num()) P_INT(cuda_device) P_NL;
+            P_INT_ARR(threaddev, 32) P_NL;
+        }
+        abort();
+    }
 }
 
-void read_start(void) 
+
+static void cuda_start(void) 
 {
 
     omp_set_lock(&dev_read_wait_lock[cuda_device]);
-
-    omp_set_lock(&dev_read_try_lock[cuda_device]);
-
-
 #pragma omp critical (read_mutex)
     {
         dev_readcount[cuda_device]++;
-        if(dev_readcount[cuda_device]==1) {
-            omp_set_lock(&dev_resource_lock[cuda_device]);
-        }
-
         if(dev_readcount[cuda_device]<MAX_SIM_CUDA_RUNS) {
             omp_unset_lock(&dev_read_wait_lock[cuda_device]);
         }
     }
-
-
-    omp_unset_lock(&dev_read_try_lock[cuda_device]);
-    dev_freshreset[cuda_device]=0;
 }
 
-void read_end(void)
+static void cuda_end(void)
 {
 #pragma omp critical (read_mutex)
     {
         dev_readcount[cuda_device]--;
-        if(dev_readcount[cuda_device]==0) {
-            omp_unset_lock(&dev_resource_lock[cuda_device]);
-        }
         if(dev_readcount[cuda_device]<MAX_SIM_CUDA_RUNS) {
             omp_unset_lock(&dev_read_wait_lock[cuda_device]);
         }
     }
 }
-
-void write_start(void) 
-{
-
-#pragma omp critical (write_mutex)
-    {
-        dev_writecount[cuda_device]++;
-        if(dev_writecount[cuda_device]==1) {
-            omp_set_lock(&dev_read_try_lock[cuda_device]);
-        }
-
-    }
-
-    omp_set_lock(&dev_resource_lock[cuda_device]);
-}
-
-void write_end(void)
-{
-    omp_unset_lock(&dev_resource_lock[cuda_device]);
-
-#pragma omp critical (write_mutex)
-    {
-        dev_writecount[cuda_device]--;
-        if(dev_writecount[cuda_device]==0) {
-            omp_unset_lock(&dev_read_try_lock[cuda_device]);
-        }
-    }
-}
-
-
-void reset_cuda(void)
-{
-    printf("reset_cuda\n");
-    write_start();
-
-    if(!dev_freshreset[cuda_device]) {
-        printf("!!!!!! RESETTING   (%d) !!!!!!\n", cuda_device);
-
-        dev_freshreset[cuda_device]=1;
-
-        cudaDeviceReset();
-
-        for(int i=0; i<32; i++) if(threaddev[i]==cuda_device) {
-            rand_init[i]=0;
-        }
-
-        int stat=1;
-
-        while(stat) {
-            sleep(1);
-            cudaFree(0);
-            stat=tryCUDAError("reset_cuda", __LINE__);
-
-            P_INT(stat);
-        }
-
-    } else {
-
-        printf("!!!!!! SKIPPING RESET (%d) !!!!!!\n", cuda_device);
-
-    }
-
-    write_end();
-
-}
-
 
 cudaError_t cudaCalloc(void **devPtr, size_t size)
 {
@@ -912,8 +810,10 @@ int isDone(struct cuda_clique_status *h_x1_status, int n, int nmap, int max_unso
         }
     } else if((nzeroes>nmap/10 || nzeroes>=32) || nzeroes>0 || nones>0) {
         done=DONE_CLEANUP;
-    } else if(maxdiff<comp_diff/100 || ( maxdiff<comp_diff && unsolved < 0.5 * n ) || (abortcheck_cb && abortcheck_cb())) {
+    } else if(maxdiff<comp_diff/100 || ( maxdiff<comp_diff && unsolved < 0.5 * n )) {
         done=DONE_CONVERGED;
+    } else if(abortcheck_cb && abortcheck_cb()) {
+        done=DONE_ABORTED;
     }
 
 
@@ -1216,9 +1116,7 @@ static int d_iterate(struct cuda_clique_data *data, int *abortcheck_cb(void))
     int mat_changed=1;
     int randomized=0;
 
-    if(tryCUDAError("memcpy", __LINE__)) {
-        return 1;
-    };
+    checkCUDAError("memcpy", __LINE__);
 
 #ifdef DEBUG
     P_INT(data->nmap) P_NL;
@@ -1289,9 +1187,7 @@ static int d_iterate(struct cuda_clique_data *data, int *abortcheck_cb(void))
 
         }
 
-        if(tryCUDAError("isDone", __LINE__)) {
-            return 1;
-        };
+        checkCUDAError("isDone", __LINE__);
 
         SWAP(data->instances[0], data->instances[1]); SWAP(data->instances[1], data->instances[2]);
 
@@ -1438,10 +1334,10 @@ extern "C" void init_cuda()
 }
 
 
-extern "C" int init_cuda_clique(struct cuda_clique_data *res, char **graph, int n)
+extern "C" void init_cuda_clique(struct cuda_clique_data *res, char **graph, int n)
 {
 
-    read_start();
+    cuda_start();
 
     if(!rand_init[omp_get_thread_num()]) {
         cudaMalloc((void **)&d_randstates, 256 * sizeof(curandState_t));
@@ -1506,8 +1402,6 @@ extern "C" int init_cuda_clique(struct cuda_clique_data *res, char **graph, int 
         cudaMemcpy2D (res->d_mat, res->mat_pitch, res->h_start_mat, n*sizeof(char), n*sizeof(char), n, cudaMemcpyHostToDevice);
     }
 
-    res->failed=0;
-
 #ifdef NO_CONCURRENCY
     res->iter_stream=0;
     res->norm_stream=0;
@@ -1519,47 +1413,43 @@ extern "C" int init_cuda_clique(struct cuda_clique_data *res, char **graph, int 
 
 #endif
 
-    if(tryCUDAError("init_cuda_clique", __LINE__)) {
-        res->failed=1;
-        return 1;
-    }
-
-    return 0;
+    checkCUDAError("init_cuda_clique", __LINE__);
 }
 
 extern "C" void clear_cuda_clique(struct cuda_clique_data *res)
 {
 
-
-    if(res->failed) goto abort;
-
     for(int i=0; i<3; i++) free_instance(res->instances[i]);
 
 
-    cudaFree(res->d_instances); if(tryCUDAError("cudaFree(res->d_instances);", __LINE__)) goto abort;
+    cudaFree(res->d_instances);
+    checkCUDAError("cudaFree(res->d_instances);", __LINE__);
 
-	cudaFree(res->d_raw); if(tryCUDAError("cudaFree(res->d_raw);", __LINE__)) goto abort;
+	cudaFree(res->d_raw);
+    checkCUDAError("cudaFree(res->d_raw);", __LINE__);
 
     if(res->d_start_mat) {
-        cudaFree(res->d_start_mat);	if(tryCUDAError("cudaFree(res->d_start_mat);", __LINE__)) goto abort;
+        cudaFree(res->d_start_mat);
+        checkCUDAError("cudaFree(res->d_start_mat);", __LINE__);
     } else {
-        cudaFree(res->d_mat);	if(tryCUDAError("cudaFree(res->d_mat);", __LINE__)) goto abort;
+        cudaFree(res->d_mat);
+        checkCUDAError("cudaFree(res->d_mat);", __LINE__);
     }
 
-	cudaFree(res->d_tmp); if(tryCUDAError("cudaFree(res->d_tmp);", __LINE__)) goto abort;
+	cudaFree(res->d_tmp);
+    checkCUDAError("cudaFree(res->d_tmp);", __LINE__);
 
     cudaStreamDestroy(res->iter_stream);
     cudaStreamDestroy(res->norm_stream);
     cudaStreamDestroy(res->zero_stream);
 
-	tryCUDAError("clear_cuda_clique", __LINE__);
+	checkCUDAError("clear_cuda_clique", __LINE__);
 
-abort:
     cudaFreeHost(res->h_instances);
 	free(res->h_start_mat);
     free(res->instances);
 
-    read_end();
+    cuda_end();
 }
 
 static int mode(float alpha, float omega)
@@ -1606,20 +1496,17 @@ extern "C" float iterate_cuda_clique(struct cuda_clique_data *data, float *x, in
         cudaMemset(data->instances[1].d_x_status, 0, sizeof(struct cuda_clique_status));
         cudaMemset(data->instances[2].d_x_status, 0, sizeof(struct cuda_clique_status));
 
-		if(d_iterate(data, abortcheck_cb)) {
-            data->failed=1;
-            return -1.;
-        }
+		d_iterate(data, abortcheck_cb);
 
         cudaMemcpy(data->instances[0].h_x_status, data->instances[0].d_x_status, sizeof(struct cuda_clique_status), cudaMemcpyDeviceToHost );
         cudaMemcpy(data->instances[1].h_x, data->instances[1].d_x, data->n * sizeof(float), cudaMemcpyDeviceToHost );
         cudaMemcpy(&(data->nmap), data->d_map-1, sizeof(int), cudaMemcpyDeviceToHost );
         cudaMemcpy(&(data->h_nones), data->d_ones-1, sizeof(int), cudaMemcpyDeviceToHost );
 
-        if(tryCUDAError("iterate_cuda_clique", __LINE__)) {
-            data->failed=1;
-            return -1.;
-        }
+        data->instances[0].h_x_status->csize=MAX(data->instances[0].h_x_status->csize, 0); // ugly hack to prevent stupid things if iteration was externally aborted too early
+
+
+        checkCUDAError("iterate_cuda_clique", __LINE__);
     }
 
 
@@ -1644,9 +1531,9 @@ extern "C" float iterate_cuda_clique(struct cuda_clique_data *data, float *x, in
 
 extern "C" float cuda_clique_size(struct cuda_clique_data *data, float *x, float alpha, float omega, float *aux_x)
 {
-	memset(data->instances[0].h_x, 0, sizeof(float) * data->n);
+    memset(data->instances[0].h_x, 0, sizeof(float) * data->n);
 
-	for(int i=0; i<data->n; i++) {
+    for(int i=0; i<data->n; i++) {
         data->instances[0].h_x[i]=x[i];
     }
 

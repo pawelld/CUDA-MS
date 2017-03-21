@@ -43,20 +43,14 @@
 
 #define MIN_SIZE 1
 
+int quiet=1;
 
 int failed=0;
-
-long long int init_time, free_time;
 
 //#define VERBOSE
 
 #define BASE_WEIGHT 0.98388
 
-static long int get_timestamp() {
-    struct timeval tv;
-    gettimeofday(&tv,NULL);
-    return tv.tv_sec*(long int)1000000+tv.tv_usec;
-}
 #ifndef NO_CUDA
 
 #define declare_data() \
@@ -66,16 +60,11 @@ static long int get_timestamp() {
 	memset(&cpu_data, 0, sizeof(cpu_data));
 
 #define init_clique(graph, graph_size) ({\
-    int __res;\
     if(cuda) {\
-        long int start = get_timestamp();\
-        __res=init_cuda_clique(&cuda_data, graph, graph_size);\
-        long int end = get_timestamp();\
-        init_time=end-start;\
+        init_cuda_clique(&cuda_data, graph, graph_size);\
     } else {\
-        __res=init_cpu_clique(&cpu_data, graph, graph_size);\
+        init_cpu_clique(&cpu_data, graph, graph_size);\
     }\
-    __res;\
 })
 
 #define iterate_clique(x, max_unsolved, zero, alpha, omega, par_unsolved, abortcheck_cb) ({\
@@ -98,19 +87,9 @@ static long int get_timestamp() {
     __res;\
 })
 
-#define reset() ({\
-    printf("reset\n"); P_INT(cuda) P_NL;\
-    if(cuda) {\
-        reset_cuda();\
-    }\
-})
-
 #define clear_clique() ({\
     if(cuda) {\
-        long int start = get_timestamp();\
         clear_cuda_clique(&cuda_data);\
-        long int end = get_timestamp();\
-        free_time=end-start;\
     } else {\
         clear_cpu_clique(&cpu_data);\
     }\
@@ -256,21 +235,18 @@ static float find_clique_motzkin(char **graph, int graph_size, float *x, int max
 
     declare_data();
 
-    float csize=-1;
+    float csize=-10;
 
-retry:
-
-    if(init_clique(graph, graph_size)) goto skip;
+    init_clique(graph, graph_size);
     if(mode == MODE_REPL_UNBIASED) alpha=0;
     csize=iterate_clique(x, max_unsolved, zero, alpha, 1., 0, 0);
 
-skip:
     clear_clique();
 
     if(csize<0) {
-        printf("!!!! iterate_clique has failed. Retrying.\n");
-        reset();
-        goto retry;
+        printf("!!!! iterate_clique has failed.\n");
+        P_FLOAT(csize);
+        abort();
     }
 
 
@@ -522,9 +498,11 @@ static int fill_alphas(char **graph, int graph_size, float **par_alpha, float mi
         n_alpha=simple_alphas(par_alpha, min_alpha);
     }
 
-    printf("alpha[0 .. %d]: ", n_alpha);
-    for(int i=0; i<n_alpha; i++) printf("%f ", (*par_alpha)[i]);
-    printf("\n");
+    if(!quiet) {
+        printf("alpha[0 .. %d]: ", n_alpha);
+        for(int i=0; i<n_alpha; i++) printf("%f ", (*par_alpha)[i]);
+        printf("\n");
+    }
 
     return n_alpha;
 }
@@ -543,16 +521,18 @@ static float find_clique_anneal(char **graph, int graph_size, float *res_x, int 
     float csize;
 
 
-retry:
-
-    if(init_clique(graph, graph_size)) goto skip;
+    init_clique(graph, graph_size);
     for(int i=0; i<n_alpha; i++) {
         fix_zeroes(res_x, graph_size, zero);
 
 
         csize=iterate_clique(res_x, max_unsolved, zero, alpha[i], 1, 0, 0);
 
-        if(csize<0) goto skip;
+        if(csize<0) {
+            printf("!!!! iterate_clique has failed.\n");
+            P_FLOAT(csize);
+            abort();
+        }
     }
 
     csize=clique_size(res_x, .0, 1, 0);
@@ -562,12 +542,6 @@ retry:
     free(alpha);
 
     return csize;
-
-skip:
-    clear_clique();
-    printf("!!!! iterate_clique has failed. Retrying.\n");
-    reset();
-    goto retry;
 }
 
 
@@ -615,9 +589,6 @@ static float find_clique_atten(char **graph, int graph_size, float *res_x, int m
 
     float first_csize=0;
 
-retry:
-
-
     n_res=0;
     max_sim=1;
     n_masks=0;
@@ -625,7 +596,9 @@ retry:
 
 
 
-    if(init_clique(graph, graph_size)) goto skip;
+    init_clique(graph, graph_size);
+    /*         P_INT(graph_size) */
+    /* printf("iteration: 0\n"); */
     while(n_masks<=max_masks) {
         if(abortcheck_cb && abortcheck_cb()) break;
 
@@ -641,12 +614,17 @@ retry:
         memcpy(x, ones, graph_size*sizeof(float));
 
         for(int i=0; i<n_alpha; i++) {
+            if(abortcheck_cb && abortcheck_cb()) break;
 
             fix_zeroes(x, graph_size, zero);
 
             tmp_csize=iterate_clique(x, max_unsolved, zero, alpha[i], BASE_WEIGHT, 0, abortcheck_cb);
 
-            if(tmp_csize<0) goto skip;
+            if(tmp_csize<0) {
+                printf("!!!! iterate_clique has failed.\n");
+                P_FLOAT(tmp_csize);
+                abort();
+            }
         }
 
         csize = clique_size(x, .0, BASE_WEIGHT, aux_x);
@@ -661,7 +639,10 @@ retry:
 
         n_res=add_one_to_best(all_res, all_csize, n_res, max_res, &max_sim, x, csize, graph_size);
 
-        printf("iteration: %d clique size: %f max clique size: %f\n", n_masks+1, csize, max_csize);
+        if(!quiet) {
+            P_INT(graph_size)
+            printf("iteration: %d clique size: %f max clique size: %f\n", n_masks+1, csize, max_csize);
+        }
 
 
 #ifdef VERBOSE
@@ -719,24 +700,6 @@ retry:
 
     return max_csize;
 
-skip:
-    clear_clique();
-    printf("!!!! iterate_clique has failed. Retrying.\n");
-    reset();
-
-    char fname[128];
-    sprintf(fname, "graph%d", ++failed);
-    FILE *f=fopen(fname, "w");
-
-    for(int i=0; i<graph_size; i++) {
-        for(int j=0; j<graph_size; j++) {
-            fprintf(f, "%c ", graph[i][j]==0 ? '0' : '1');
-        }
-        fprintf(f, "\n");
-    }
-    fclose(f);
-
-    goto retry;
 }
 
 static float find_clique_simplex_int(t_bitmask *par_res, t_bitmask *par_res_upper, char **graph, int graph_size, t_bitmask allowed, int max_unsolved, 

@@ -41,7 +41,7 @@
 #define ZERO 0.05f
 #define MAX_DIFF_FACT 0.05
 
-int init_cpu_clique(struct cpu_clique_data *res, char **graph, int n)
+void init_cpu_clique(struct cpu_clique_data *res, char **graph, int n)
 {
 	res->n=n;
 
@@ -66,8 +66,6 @@ int init_cpu_clique(struct cpu_clique_data *res, char **graph, int n)
             }
 		}
 	}
-
-    return 0;
 }
 
 
@@ -373,7 +371,7 @@ float iterate_cpu_clique(struct cpu_clique_data *data, float *x, int max_unsolve
 		} else if(maxdiff<comp_diff/100 || ( maxdiff<comp_diff && unsolved < 0.5 * n ) ) {
             done=DONE_CONVERGED;
         } else if(abortcheck_cb && abortcheck_cb()) {
-            done=DONE_CONVERGED;
+            done=DONE_ABORTED;
         }
 
 		/* P_FLOAT(csize) P_FLOAT(unsolved) P_FLOAT(maxdiff) P_FLOAT(comp_diff) P_INT(nzeroes) P_INT(data->list[0]) P_INT(done) P_INT(data->rem_cnt) P_NL; */
@@ -460,5 +458,5 @@ float iterate_cpu_clique(struct cpu_clique_data *data, float *x, int max_unsolve
 
     /* P_T("interate_cpu_clique: ") P_FLOAT(data->csize) P_NL; */
 
-	return data->csize;
+	return MAX(data->csize, 0);
 }

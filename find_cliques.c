@@ -257,6 +257,7 @@ int main(int argc, char **argv)
         }
     }
 
+    quiet=0;
 
     void run(int cuda)
     {

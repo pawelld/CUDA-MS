@@ -76,13 +76,13 @@ CUDA_SOURCES= $(MOTZKIN_CUDA_SOURCES)
 
 
 
-all: libcudamole.la find_cliques
+all: libcudams.la find_cliques
 
 dep: $(SOURCES:.c=.d) $(SOURCES_CXX:.c=.d)
 
 
 
-libcudamole.la: $(MOTZKIN_SOURCES:.c=.lo)  $(MOTZKIN_CUDA_SOURCES:.cu=.lo)
+libcudams.la: $(MOTZKIN_SOURCES:.c=.lo)  $(MOTZKIN_CUDA_SOURCES:.cu=.lo)
 	$(LIBTOOL) --mode=link --tag=CXX $(GPP) $(LDFLAGS) -o $@ $^ $(LDLIBS) -lopts -rpath $(LIB_PATH)
 
 find_cliques: find_cliques.o  $(COMMON_SOURCES:.c=.o)  $(ARRAYS_SOURCES:.c=.o) $(MOTZKIN_SOURCES:.c=.o)  $(MOTZKIN_CUDA_SOURCES:.cu=.o)
@@ -96,7 +96,7 @@ install-dev:
 	install -p cudams.h $(INCLUDE_PATH)/cudams.h
 
 install: install-dev all
-	$(LIBTOOL) --mode=install install libcudamole.la $(LIB_PATH)/libcudamole.la
+	$(LIBTOOL) --mode=install install libcudams.la $(LIB_PATH)/libcudams.la
 
 
 include $(SOURCES:.c=.d)

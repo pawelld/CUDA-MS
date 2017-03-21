@@ -33,6 +33,7 @@
 #define DONE_SOLVED 1
 #define DONE_CLEANUP 2
 #define DONE_CONVERGED 3
+#define DONE_ABORTED 4
 
 #define MODE_SIMPLE 1
 #define MODE_REGULAR    2
@@ -133,15 +134,12 @@ struct cuda_clique_data {
     cudaStream_t norm_stream;
     cudaStream_t zero_stream;
 
-    int failed;
 };
 
 
 void init_cuda(void);
 
-void reset_cuda(void);
-
-int init_cuda_clique(struct cuda_clique_data *res, char **graph, int n);
+void init_cuda_clique(struct cuda_clique_data *res, char **graph, int n);
 void clear_cuda_clique(struct cuda_clique_data *res);
 float iterate_cuda_clique(struct cuda_clique_data *data, float *x, int max_unsolved, float zero, float alpha, float omega, float *par_unsolved, int *abortcheck_cb(void));
 
